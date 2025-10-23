@@ -64,5 +64,6 @@ target_link_libraries(tps_env PRIVATE
         gdcmIOD
         gdcmMSFF
         gdcmjpeg16
+        gdcmRT
         )
 

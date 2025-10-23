@@ -12,6 +12,13 @@
 
 #include <sys/mman.h>   //for io
 
+// GDCM headers for DICOM RT Dose support
+#include "gdcmAttribute.h"
+#include "gdcmFile.h"
+#include "gdcmWriter.h"
+#include "gdcmUIDGenerator.h"
+#include "gdcmMediaStorage.h"
+
 #include <moqui/base/mqi_common.hpp>
 #include <moqui/base/mqi_hash_table.hpp>
 #include <moqui/base/mqi_roi.hpp>
@@ -20,6 +27,15 @@
 
 namespace mqi
 {
+/// Save dose data as DICOM RT Dose file
+template<typename R>
+void
+save_to_dcm(const mqi::node_t<R>* children,
+            const double*         src,
+            const R               scale,
+            const std::string&    filepath,
+            const std::string&    filename,
+            const uint32_t        length);
 namespace io
 {
 ///<  save scorer data to a file in binary format
@@ -594,6 +610,249 @@ mqi::io::save_to_mha(const mqi::node_t<R>* children,
     fid_header.write(reinterpret_cast<const char*>(&dest[0]), length * sizeof(double));
     fid_header.close();
     if (!fid_header.good()) { std::cout << "Error occurred at writing time!" << std::endl; }
+}
+
+// Helper functions for DICOM RT Dose export
+static std::string generate_uid() {
+    gdcm::UIDGenerator uid_gen;
+    return uid_gen.Generate();
+}
+
+static std::string get_current_date() {
+    time_t now = time(0);
+    struct tm tstruct = *localtime(&now);
+    char buf[9];
+    strftime(buf, sizeof(buf), "%Y%m%d", &tstruct);
+    return buf;
+}
+
+static std::string get_current_time() {
+    time_t now = time(0);
+    struct tm tstruct = *localtime(&now);
+    char buf[7];
+    strftime(buf, sizeof(buf), "%H%M%S", &tstruct);
+    return buf;
+}
+
+template<typename R>
+void
+mqi::io::save_to_dcm(const mqi::node_t<R>* children,
+                      const double*         src,
+                      const R               scale,
+                      const std::string&    filepath,
+                      const std::string&    filename,
+                      const uint32_t        length)
+{
+    // Step 1: Extract grid geometry (similar to save_to_mhd lines 499-515)
+    const mqi::grid3d<R>& grid = children->geo_[0];
+    int    nx = grid.dim_[0];
+    int    ny = grid.dim_[1];
+    int    nz = grid.dim_[2];
+    double dx = grid.voxel_size_[0];
+    double dy = grid.voxel_size_[1];
+    double dz = grid.voxel_size_[2];
+    double x0 = grid.x_[grid.dim_[0] / 2];
+    double y0 = grid.y_[grid.dim_[1] / 2];
+    double z0 = grid.z_[grid.dim_[2] / 2];
+
+    // Step 2: Apply scaling and find dose range
+    std::valarray<double> dest(src, length);
+    dest *= scale;
+    double max_dose = dest.max();
+    double min_dose = dest.min();
+
+    // Step 3: Convert to 16-bit unsigned integers with dose scaling
+    // DICOM uses: dose_value = pixel_value * DoseGridScaling
+    double dose_grid_scaling = max_dose / 65535.0;  // Max 16-bit value
+    if (dose_grid_scaling == 0.0) dose_grid_scaling = 1.0;  // Avoid division by zero
+    
+    std::vector<uint16_t> pixel_data(length);
+    for (size_t i = 0; i < length; i++) {
+        pixel_data[i] = static_cast<uint16_t>(dest[i] / dose_grid_scaling);
+    }
+
+    // Step 4: Create DICOM file and set required attributes
+    gdcm::File dcm_file;
+    gdcm::DataSet& ds = dcm_file.GetDataSet();
+
+    // SOP Common Module
+    gdcm::Attribute<0x0008, 0x0016> sop_class_uid;
+    sop_class_uid.Set("1.2.840.10008.5.1.4.1.1.481.2");  // RT Dose Storage
+    ds.Insert(sop_class_uid.GetAsDataElement());
+
+    gdcm::Attribute<0x0008, 0x0018> sop_instance_uid;
+    sop_instance_uid.Set(generate_uid().c_str());
+    ds.Insert(sop_instance_uid.GetAsDataElement());
+
+    gdcm::Attribute<0x0008, 0x0012> instance_creation_date;
+    instance_creation_date.Set(get_current_date().c_str());
+    ds.Insert(instance_creation_date.GetAsDataElement());
+
+    gdcm::Attribute<0x0008, 0x0013> instance_creation_time;
+    instance_creation_time.Set(get_current_time().c_str());
+    ds.Insert(instance_creation_time.GetAsDataElement());
+
+    // Patient Module
+    gdcm::Attribute<0x0010, 0x0010> patient_name;
+    patient_name.Set("PHANTOM");
+    ds.Insert(patient_name.GetAsDataElement());
+
+    gdcm::Attribute<0x0010, 0x0020> patient_id;
+    patient_id.Set("QA_PHANTOM");
+    ds.Insert(patient_id.GetAsDataElement());
+
+    // General Study Module
+    gdcm::Attribute<0x0020, 0x000d> study_instance_uid;
+    study_instance_uid.Set(generate_uid().c_str());
+    ds.Insert(study_instance_uid.GetAsDataElement());
+
+    gdcm::Attribute<0x0008, 0x0020> study_date;
+    study_date.Set(get_current_date().c_str());
+    ds.Insert(study_date.GetAsDataElement());
+
+    gdcm::Attribute<0x0008, 0x0030> study_time;
+    study_time.Set(get_current_time().c_str());
+    ds.Insert(study_time.GetAsDataElement());
+
+    gdcm::Attribute<0x0020, 0x0010> study_id;
+    study_id.Set("1");
+    ds.Insert(study_id.GetAsDataElement());
+
+    // RT Series Module
+    gdcm::Attribute<0x0008, 0x0060> modality;
+    modality.Set("RTDOSE");
+    ds.Insert(modality.GetAsDataElement());
+
+    gdcm::Attribute<0x0020, 0x000e> series_instance_uid;
+    series_instance_uid.Set(generate_uid().c_str());
+    ds.Insert(series_instance_uid.GetAsDataElement());
+
+    gdcm::Attribute<0x0020, 0x0011> series_number;
+    series_number.Set("1");
+    ds.Insert(series_number.GetAsDataElement());
+
+    // Frame of Reference Module
+    gdcm::Attribute<0x0020, 0x0052> frame_of_reference_uid;
+    frame_of_reference_uid.Set(generate_uid().c_str());
+    ds.Insert(frame_of_reference_uid.GetAsDataElement());
+
+    // General Equipment Module
+    gdcm::Attribute<0x0008, 0x0070> manufacturer;
+    manufacturer.Set("MOQUI");
+    ds.Insert(manufacturer.GetAsDataElement());
+
+    gdcm::Attribute<0x0018, 0x1020> software_versions;
+    software_versions.Set("1.0");
+    ds.Insert(software_versions.GetAsDataElement());
+
+    // Image Plane Module
+    gdcm::Attribute<0x0028, 0x0010> rows;
+    rows.Set(ny);
+    ds.Insert(rows.GetAsDataElement());
+
+    gdcm::Attribute<0x0028, 0x0011> columns;
+    columns.Set(nx);
+    ds.Insert(columns.GetAsDataElement());
+
+    gdcm::Attribute<0x0028, 0x0008> number_of_frames;
+    number_of_frames.Set(std::to_string(nz).c_str());
+    ds.Insert(number_of_frames.GetAsDataElement());
+
+    gdcm::Attribute<0x0028, 0x0002> samples_per_pixel;
+    samples_per_pixel.Set(1);
+    ds.Insert(samples_per_pixel.GetAsDataElement());
+
+    gdcm::Attribute<0x0028, 0x0004> photometric_interpretation;
+    photometric_interpretation.Set("MONOCHROME2");
+    ds.Insert(photometric_interpretation.GetAsDataElement());
+
+    gdcm::Attribute<0x0028, 0x0100> bits_allocated;
+    bits_allocated.Set(16);
+    ds.Insert(bits_allocated.GetAsDataElement());
+
+    gdcm::Attribute<0x0028, 0x0101> bits_stored;
+    bits_stored.Set(16);
+    ds.Insert(bits_stored.GetAsDataElement());
+
+    gdcm::Attribute<0x0028, 0x0102> high_bit;
+    high_bit.Set(15);
+    ds.Insert(high_bit.GetAsDataElement());
+
+    gdcm::Attribute<0x0028, 0x0103> pixel_representation;
+    pixel_representation.Set(0);  // Unsigned
+    ds.Insert(pixel_representation.GetAsDataElement());
+
+    // RT Dose Module
+    gdcm::Attribute<0x3004, 0x0001> dose_units;
+    dose_units.Set("GY");
+    ds.Insert(dose_units.GetAsDataElement());
+
+    gdcm::Attribute<0x3004, 0x0002> dose_type;
+    dose_type.Set("PHYSICAL");
+    ds.Insert(dose_type.GetAsDataElement());
+
+    gdcm::Attribute<0x3004, 0x000a> dose_summation_type;
+    dose_summation_type.Set("PLAN");
+    ds.Insert(dose_summation_type.GetAsDataElement());
+
+    gdcm::Attribute<0x3004, 0x000e> dose_grid_scaling_attr;
+    dose_grid_scaling_attr.Set(dose_grid_scaling);
+    ds.Insert(dose_grid_scaling_attr.GetAsDataElement());
+
+    // Image Pixel Module - Spatial attributes
+    gdcm::Attribute<0x0028, 0x0030> pixel_spacing;
+    std::stringstream ps_ss;
+    ps_ss << std::fixed << std::setprecision(6) << dy << "\" << dx;
+    pixel_spacing.Set(ps_ss.str().c_str());
+    ds.Insert(pixel_spacing.GetAsDataElement());
+
+    // Grid frame offset vector
+    std::stringstream gf_ss;
+    for (int i = 0; i < nz; i++) {
+        if (i > 0) gf_ss << "\";
+        gf_ss << std::fixed << std::setprecision(6) << (grid.z_[i] - z0);
+    }
+    gdcm::Attribute<0x3004, 0x000c> grid_frame_offset_vector;
+    grid_frame_offset_vector.Set(gf_ss.str().c_str());
+    ds.Insert(grid_frame_offset_vector.GetAsDataElement());
+
+    // Image position (top-left corner of first voxel)
+    std::stringstream ip_ss;
+    ip_ss << std::fixed << std::setprecision(6) 
+          << (grid.x_[0] - dx/2) << "\"
+          << (grid.y_[0] - dy/2) << "\"
+          << (grid.z_[0] - dz/2);
+    gdcm::Attribute<0x0020, 0x0032> image_position_patient;
+    image_position_patient.Set(ip_ss.str().c_str());
+    ds.Insert(image_position_patient.GetAsDataElement());
+
+    // Image orientation (default: HFS - Head First Supine)
+    gdcm::Attribute<0x0020, 0x0037> image_orientation_patient;
+    image_orientation_patient.Set("1\0\0\0\1\0");
+    ds.Insert(image_orientation_patient.GetAsDataElement());
+
+    // Pixel data
+    gdcm::Attribute<0x7fe0, 0x0010> pixel_data;
+    pixel_data.SetByteValue(reinterpret_cast<const char*>(pixel_data.data()), 
+                           length * sizeof(uint16_t));
+    ds.Insert(pixel_data.GetAsDataElement());
+
+    // Set transfer syntax (explicit VR little endian)
+    gdcm::UIDs ts;
+    dcm_file.GetHeader().SetDataSetTransferSyntax(ts.GetTransferSyntax(gdcm::UIDs::ExplicitVRLittleEndianDefaultTransferSyntax));
+
+    // Write to file
+    gdcm::Writer writer;
+    writer.SetFile(dcm_file);
+    std::string full_path = filepath + "/" + filename + ".dcm";
+    if (!writer.Write(full_path.c_str())) {
+        std::cout << "Error: Failed to write DICOM RT Dose file: " << full_path << std::endl;
+    } else {
+        std::cout << "Successfully wrote DICOM RT Dose file: " << full_path << std::endl;
+        std::cout << "  Dimensions: " << nx << "x" << ny << "x" << nz << std::endl;
+        std::cout << "  Dose grid scaling: " << dose_grid_scaling << " Gy/pixel value" << std::endl;
+        std::cout << "  Max dose: " << max_dose << " Gy" << std::endl;
+    }
 }
 
 #endif

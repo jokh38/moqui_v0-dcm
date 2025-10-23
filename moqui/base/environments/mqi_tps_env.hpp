@@ -1608,6 +1608,13 @@ public:
                                             this->output_path,
                                             filename,
                                             vol_size);
+                } else if (!this->output_format.compare("dcm")) {
+                    mqi::io::save_to_dcm<R>(this->world->children[c_ind],
+                                            reshaped_data,
+                                            this->particles_per_history,
+                                            this->output_path,
+                                            filename,
+                                            vol_size);
                 } else {
                     mqi::io::save_to_bin<double>(reshaped_data,
                                                  this->particles_per_history,
