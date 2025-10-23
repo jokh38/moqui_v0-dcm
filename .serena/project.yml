@@ -1,0 +1,4 @@
+project_name: moqui_v0-dcm
+language: cpp
+description: "MOQUI v0 DCM - Monte Carlo dose calculation engine for radiotherapy"
+version: "1.0.0"
