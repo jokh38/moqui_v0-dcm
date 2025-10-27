@@ -12,9 +12,8 @@ set(GPU ON)
 # for CPU version and using nvcc for GPU version.
 # It will not be compiled using g++ if the extension is cu
 
-# setting Cuda 11.7 
-set(CMAKE_CUDA_COMPILER /usr/local/cuda-11.7/bin/nvcc CACHE FILEPATH "CUDA 11.7 nvcc" FORCE)
-set(CUDATOOLkit_ROOT /usr/local/cuda-11.7 CACHE PATH "CUDA 11.7 root" FORCE)
+# Use detected CUDA version instead of hardcoding to 11.7
+# Let CMake find the CUDA installation automatically
 add_executable(tps_env tps_env.cpp)
 
 if (GPU)
@@ -34,8 +33,18 @@ else ()
     set(CMAKE_CXX_COMPILER g++)
 endif ()
 
-find_package(GDCM REQUIRED)
-include(${GDCM_USE_FILE})
+# Try to find GDCM, but make it optional if broken
+find_package(GDCM QUIET)
+if(GDCM_FOUND)
+    include(${GDCM_USE_FILE})
+    message("Found GDCM: ${GDCM_VERSION}")
+else()
+    message(WARNING "GDCM not found or incomplete. DICOM functionality may be limited.")
+    # Manually specify GDCM include directories if needed
+    set(GDCM_INCLUDE_DIRS /usr/include/gdcm-3.0)
+    set(GDCM_LIBRARIES gdcmCommon gdcmDSED gdcmMEXD gdcmjpeg12 gdcmjpeg8
+                      gdcmDICT gdcmIOD gdcmMSFF gdcmjpeg16 gdcmRT)
+endif()
 
 if (APPLE)
     find_library(COREFOUNDATION_LIBRARY CoreFoundation)
@@ -50,20 +59,18 @@ include_directories(
         /usr/local/cuda/include
 )
 
-link_directories(${GDCM_DIR})
-
-target_link_libraries(tps_env PRIVATE
-        CUDA::cudart
-        ${COREFOUNDATION_LIBRARY}
-        gdcmCommon
-        gdcmDSED
-        gdcmMEXD
-        gdcmjpeg12
-        gdcmjpeg8
-        gdcmDICT
-        gdcmIOD
-        gdcmMSFF
-        gdcmjpeg16
-        gdcmRT
-        )
+# Only add GDCM libraries if found
+if(GDCM_FOUND)
+    link_directories(${GDCM_DIR})
+    target_link_libraries(tps_env PRIVATE
+            CUDA::cudart
+            ${COREFOUNDATION_LIBRARY}
+            ${GDCM_LIBRARIES}
+            )
+else()
+    target_link_libraries(tps_env PRIVATE
+            CUDA::cudart
+            ${COREFOUNDATION_LIBRARY}
+            )
+endif()
 
