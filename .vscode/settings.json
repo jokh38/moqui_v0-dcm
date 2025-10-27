@@ -1,0 +1,7 @@
+{
+    "files.associations": {
+        "complex": "cpp",
+        "cstdint": "cpp",
+        "valarray": "cpp"
+    }
+}
