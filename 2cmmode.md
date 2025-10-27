@@ -172,15 +172,40 @@ Since only the center phantom has a scorer, the output will be:
 
 ## Key Implementation Details
 
-### Variable Confusion
-The variable naming in lines 787-797 can be confusing:
+### Variable Confusion and Coordinate System Transformation
+
+The variable naming in lines 787-797 can be confusing because it involves **two different coordinate systems**:
+
 ```cpp
-this->phantomDimX = 400;  // Actually means 400mm in X
-this->phantomDimY = 1;    // Actually means 1 voxel in Y (2cm thick)
-this->phantomDimZ = 400;  // Actually means 400mm in Z
+this->phantomDimX = 400;  // DICOM X dimension → World X-axis (400 voxels)
+this->phantomDimY = 1;    // DICOM Y dimension → World Z-axis (1 voxel, 2mm thick)
+this->phantomDimZ = 400;  // DICOM Z dimension → World Y-axis (400 voxels)
 ```
 
-This sets `dcm_.dim_` which is later used for scorer capacity, but the **actual phantom geometry** is defined separately in the grid3d constructors (lines 931-979).
+#### Coordinate System Mapping
+
+There are two coordinate systems at play:
+
+1. **DICOM Coordinate System** (used for `dcm_.dim_` and variable naming)
+2. **World/Physics Coordinate System** (used for actual geometry construction)
+
+The transformation is: **DICOM (X,Y,Z) → World (X,Z,Y)**
+
+#### Why This Mapping Exists
+
+1. **DICOM Convention**: In medical imaging, Z typically represents the slice direction (axial direction)
+2. **Physics Convention**: In particle transport, Z typically represents the beam direction
+3. **2cm Mode Requirements**: Creates a thin measurement plane perpendicular to the beam, so the "thin" dimension (1 voxel) needs to align with the beam direction
+
+#### Evidence in Code
+
+- **Line 458**: `dcm.dim_ = { this->phantomDimX, this->phantomDimY, this->phantomDimZ }` (DICOM coordinates)
+- **Lines 950-959**: Actual grid construction uses transformed coordinates where scorer plane is XY in world coordinates
+- **Line 1039**: Scorer capacity uses DICOM dimensions (400 * 1 * 400 = 160,000)
+
+This explains why `phantomDimY` has "Y" in its name (following DICOM conventions) but the actual scorer plane is correctly defined in the XY direction in world coordinates through this coordinate system transformation.
+
+The **actual phantom geometry** is defined separately in the grid3d constructors (lines 931-979) using the transformed world coordinate system.
 
 ### Node Hierarchy
 ```
