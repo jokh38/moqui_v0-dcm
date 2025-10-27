@@ -802,14 +802,14 @@ mqi::io::save_to_dcm(const mqi::node_t<R>* children,
     // Image Pixel Module - Spatial attributes
     gdcm::Attribute<0x0028, 0x0030> pixel_spacing;
     std::stringstream ps_ss;
-    ps_ss << std::fixed << std::setprecision(6) << dy << "\" << dx;
+    ps_ss << std::fixed << std::setprecision(6) << dy << "\\" << dx;
     pixel_spacing.Set(ps_ss.str().c_str());
     ds.Insert(pixel_spacing.GetAsDataElement());
 
     // Grid frame offset vector
     std::stringstream gf_ss;
     for (int i = 0; i < nz; i++) {
-        if (i > 0) gf_ss << "\";
+        if (i > 0) gf_ss << "\\";
         gf_ss << std::fixed << std::setprecision(6) << (grid.z_[i] - z0);
     }
     gdcm::Attribute<0x3004, 0x000c> grid_frame_offset_vector;
@@ -818,9 +818,9 @@ mqi::io::save_to_dcm(const mqi::node_t<R>* children,
 
     // Image position (top-left corner of first voxel)
     std::stringstream ip_ss;
-    ip_ss << std::fixed << std::setprecision(6) 
-          << (grid.x_[0] - dx/2) << "\"
-          << (grid.y_[0] - dy/2) << "\"
+    ip_ss << std::fixed << std::setprecision(6)
+          << (grid.x_[0] - dx/2) << "\\"
+          << (grid.y_[0] - dy/2) << "\\"
           << (grid.z_[0] - dz/2);
     gdcm::Attribute<0x0020, 0x0032> image_position_patient;
     image_position_patient.Set(ip_ss.str().c_str());
@@ -828,7 +828,7 @@ mqi::io::save_to_dcm(const mqi::node_t<R>* children,
 
     // Image orientation (default: HFS - Head First Supine)
     gdcm::Attribute<0x0020, 0x0037> image_orientation_patient;
-    image_orientation_patient.Set("1\0\0\0\1\0");
+    image_orientation_patient.Set("1\\0\\0\\0\\1\\0");
     ds.Insert(image_orientation_patient.GetAsDataElement());
 
     // Pixel data
